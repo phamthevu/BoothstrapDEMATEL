@@ -59,17 +59,30 @@ def parse_fuzzy_label(val):
     key = str(val).strip()
     if key in FUZZY_SCALE:
         return FUZZY_SCALE[key]
-    return (0.0, 0.0, 0.0)
+    return "Not found"
 
 def defuzzify(l, m, u):
     """Defuzz tam giác:"""
     return (l + m + u) / 3
 
 # ─── Đọc dữ liệu từ các sheet Ans ─────────────────────────────────────────
-def read_expert_sheets(filepath):
+def read_expert_sheets(
+    filepath,
+    start_row=2,
+    start_col=2,
+    n_rows=None,
+    n_cols=None,
+    header_row=1
+):
     """
-    Trả về: factors (list), experts (list of 2D np.array defuzzified)
+    Configurable reader:
+    - start_row: dòng bắt đầu dữ liệu (1-based)
+    - start_col: cột bắt đầu dữ liệu (1-based)
+    - n_rows: số hàng (factor)
+    - n_cols: số cột
+    - header_row: dòng chứa tên factor
     """
+
     wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
     sheet_names = wb.sheetnames
 
@@ -77,32 +90,50 @@ def read_expert_sheets(filepath):
     ans_sheets.sort(key=lambda x: int(re.search(r'\d+', x).group()))
 
     if not ans_sheets:
-        print("❌ Không tìm thấy sheet 'Ans N'. Kiểm tra lại tên sheet.")
+        print("❌ Không tìm thấy sheet 'Ans N'")
         sys.exit(1)
 
-    # Lấy tên nhân tố từ sheet Ans 1
+    # ===== Lấy header =====
     ws0 = wb[ans_sheets[0]]
     rows0 = list(ws0.iter_rows(values_only=True))
-    header_row = rows0[0]
-    factors = [str(c).strip() for c in header_row[1:] if c is not None]
-    n = len(factors)
 
+    header = rows0[header_row - 1]
+
+    if n_cols is None:
+        # auto detect đến khi gặp None
+        factors = []
+        for c in header[start_col - 1:]:
+            if c is None:
+                break
+            factors.append(str(c).strip())
+        n = len(factors)
+    else:
+        factors = [str(header[start_col - 1 + i]).strip() for i in range(n_cols)]
+        n = n_cols
+
+    if n_rows is not None:
+        n = n_rows
+
+    # ===== Read expert matrices =====
     experts = []
+
     for sheet_name in ans_sheets:
         ws = wb[sheet_name]
         rows = list(ws.iter_rows(values_only=True))
-        # Lấy 12 hàng dữ liệu (bỏ header row 0)
+
         matrix = np.zeros((n, n))
+
         for i in range(n):
-            row = rows[i + 1]  # skip header
             for j in range(n):
-                val = row[j + 1]  # skip row label
+                val = rows[start_row - 1 + i][start_col - 1 + j]
                 l, m, u = parse_fuzzy_label(val)
                 matrix[i, j] = defuzzify(l, m, u)
+
         experts.append(matrix)
 
     wb.close()
-    print(f"✅ Đọc xong {len(experts)} chuyên gia, {n} nhân tố: {factors}")
+
+    print(f"✅ Read {len(experts)} experts, {n} factors")
     return factors, experts
 
 # ─── Tính DEMATEL từ một tập expert matrices ────────────────────────────────
@@ -553,16 +584,32 @@ def main():
 if __name__ == "__main__":
     main()
 
-def run_pipeline(input_file, output_xls, output_img, B=5000, alpha=0.05, seed=80):
-    print("🚀 Running pipeline...")
-
-    factors, experts = read_expert_sheets(input_file)
+def run_pipeline(
+    input_file,
+    output_xls,
+    output_img,
+    B=5000,
+    alpha=0.05,
+    seed=80,
+    start_row=2,
+    start_col=2,
+    n_rows=None,
+    n_cols=None,
+    header_row=1
+):
+    factors, experts = read_expert_sheets(
+        input_file,
+        start_row=start_row,
+        start_col=start_col,
+        n_rows=n_rows,
+        n_cols=n_cols,
+        header_row=header_row
+    )
 
     df, rc_plus, rc_minus, T_orig, p_boot, r_boot = run_bootstrap(
         factors, experts, B=B, seed=seed, alpha=alpha)
 
     export_excel(df, factors, T_orig, p_boot, r_boot, output_xls, B, alpha)
-
     plot_irm(df, factors, p_boot, r_boot, output_img, alpha)
 
     return df

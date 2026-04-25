@@ -21,6 +21,19 @@ seed = st.sidebar.number_input("Random seed", value=80)
 
 output_name = st.sidebar.text_input("Output name", value="result")
 
+st.sidebar.header("📐 Data Config")
+
+start_row = st.sidebar.number_input("Start row", value=2)
+start_col = st.sidebar.number_input("Start column", value=2)
+header_row = st.sidebar.number_input("Header row", value=1)
+
+n_rows = st.sidebar.number_input("Number of rows (factors)", value=0)
+n_cols = st.sidebar.number_input("Number of cols", value=0)
+
+# convert 0 → None
+n_rows = None if n_rows == 0 else n_rows
+n_cols = None if n_cols == 0 else n_cols
+
 # ===== RUN BUTTON =====
 if st.button("🚀 Run Analysis"):
 
@@ -47,7 +60,12 @@ if st.button("🚀 Run Analysis"):
                 output_img,
                 B=B,
                 alpha=alpha,
-                seed=seed
+                seed=seed,
+                start_row=start_row,
+                start_col=start_col,
+                n_rows=n_rows,
+                n_cols=n_cols,
+                header_row=header_row
             )
 
         st.success("✅ Done!")
