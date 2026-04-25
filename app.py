@@ -15,7 +15,56 @@ uploaded_file = st.file_uploader("📂 Upload Excel file", type=["xlsx"])
 # ===== CONFIG =====
 st.sidebar.header("⚙️ Configuration")
 
-B = st.sidebar.number_input("Bootstrap samples (B)", min_value=100, value=2000)
+# ===== FUZZY SCALE UPLOAD =====
+st.sidebar.markdown("### 📂 Fuzzy Scale")
+
+fuzzy_file = st.sidebar.file_uploader(
+    "Upload Fuzzy Scale", type=["xlsx"]
+)
+fuzzy_scale = None
+
+if fuzzy_file is not None:
+    import tempfile
+    import pandas as pd
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        tmp.write(fuzzy_file.read())
+        fuzzy_path = tmp.name
+
+    from bootstrap_dematel import load_fuzzy_scale
+    fuzzy_scale = load_fuzzy_scale(fuzzy_path)
+
+    st.sidebar.success(f"Loaded {len(fuzzy_scale)} labels")
+
+    # preview
+    df_fuzzy = pd.DataFrame([
+        {"Label": k, "L": v[0], "M": v[1], "U": v[2]}
+        for k, v in fuzzy_scale.items()
+    ])
+    st.sidebar.dataframe(df_fuzzy, height=200)
+
+# ===== DEFUZZIFY FORMULA =====
+st.sidebar.markdown("### 🧮 Defuzzify Formula")
+st.sidebar.info("""
+📌 Formula guide:
+- Power: l**2 (NOT l^2)
+- sqrt: m**0.5
+- variables: l, m, u
+""")
+
+formula = st.sidebar.text_input(
+    "Formula (use l, m, u)",
+    value="(l + m + u)/3"
+)
+
+from bootstrap_dematel import validate_formula, build_defuzzify_func
+
+valid, err = validate_formula(formula)
+
+if not valid:
+    st.sidebar.error(f"❌ Invalid formula: {err}")
+
+B = st.sidebar.number_input("Bootstrap samples (B)", min_value=1, value=2000)
 alpha = st.sidebar.slider("Alpha (CI)", 0.01, 0.2, 0.05)
 seed = st.sidebar.number_input("Random seed", value=80)
 
@@ -54,6 +103,7 @@ if st.button("🚀 Run Analysis"):
 
         # ===== RUN =====
         with st.spinner("⏳ Running Bootstrap... (có thể mất vài phút)"):
+            defuzz_func = build_defuzzify_func(formula)
             df = run_pipeline(
                 input_path,
                 output_xls,
@@ -65,7 +115,9 @@ if st.button("🚀 Run Analysis"):
                 start_col=start_col,
                 n_rows=n_rows,
                 n_cols=n_cols,
-                header_row=header_row
+                header_row=header_row,
+                fuzzy_scale=fuzzy_scale,
+                defuzz_func=defuzz_func
             )
 
         st.success("✅ Done!")

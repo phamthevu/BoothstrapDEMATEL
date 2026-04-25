@@ -23,47 +23,74 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ─── Thang đánh giá Z-Fuzzy (L, M, U) ─────────────────────────────────────
-FUZZY_SCALE = {
-    "AI;VH": (0.2846, 0.3795, 0.3795),
-    "AI;H":  (0.2510, 0.3347, 0.3347),
-    "VI;VH": (0.1897, 0.2846, 0.3795),
-    "AI;M":  (0.2121, 0.2828, 0.2828),
-    "VI;H":  (0.1673, 0.2510, 0.3347),
-    "VI;M":  (0.1414, 0.2121, 0.2828),
-    "AI;L":  (0.1643, 0.2191, 0.2191),
-    "FI;VH": (0.0949, 0.1897, 0.2846),
-    "FI;H":  (0.0837, 0.1673, 0.2510),
-    "VI;L":  (0.1095, 0.1643, 0.2191),
-    "FI;M":  (0.0707, 0.1414, 0.2121),
-    "AI;VL": (0.0949, 0.1265, 0.1265),
-    "FI;L":  (0.0548, 0.1095, 0.1643),
-    "VI;VL": (0.0632, 0.0949, 0.1265),
-    "WI;VH": (0.0000, 0.0949, 0.1897),
-    "WI;H":  (0.0000, 0.0837, 0.1673),
-    "WI;M":  (0.0000, 0.0707, 0.1414),
-    "FI;VL": (0.0316, 0.0632, 0.0949),
-    "WI;L":  (0.0000, 0.0548, 0.1095),
-    "NI;VH": (0.0000, 0.0000, 0.0949),
-    "WI;VL": (0.0000, 0.0316, 0.0632),
-    "NI;H":  (0.0000, 0.0000, 0.0837),
-    "NI;M":  (0.0000, 0.0000, 0.0707),
-    "NI;L":  (0.0000, 0.0000, 0.0548),
-    "NI;VL": (0.0000, 0.0000, 0.0316),
-    "0":     (0.0000, 0.0000, 0.0000),
-}
+def load_fuzzy_scale(filepath):
+    """
+    Đọc fuzzy scale từ Excel:
+    Col A: label
+    Col B,C,D: L,M,U
+    """
+    wb = openpyxl.load_workbook(filepath, data_only=True)
+    ws = wb.active
 
-def parse_fuzzy_label(val):
-    """Chuyển nhãn fuzzy hoặc số 0 sang tuple (l, m, u)."""
+    scale = {}
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[0] is None:
+            continue
+
+        key = str(row[0]).strip()
+        try:
+            l = float(row[1])
+            m = float(row[2])
+            u = float(row[3])
+        except:
+            continue
+
+        scale[key] = (l, m, u)
+
+    wb.close()
+
+    if "0" not in scale:
+        scale["0"] = (0.0, 0.0, 0.0)
+
+    return scale
+
+def parse_fuzzy_label(val, fuzzy_scale):
     if val is None or val == 0 or str(val).strip() == "0":
         return (0.0, 0.0, 0.0)
-    key = str(val).strip()
-    if key in FUZZY_SCALE:
-        return FUZZY_SCALE[key]
-    return "Not found"
 
-def defuzzify(l, m, u):
-    """Defuzz tam giác:"""
-    return (l + m + u) / 3
+    key = str(val).strip()
+
+    if key in fuzzy_scale:
+        return fuzzy_scale[key]
+
+    raise ValueError(f"❌ Fuzzy label not found: {key}")
+
+# ─── Nhập công thức defuzzy ─────────────────────────────────────────
+def build_defuzzify_func(formula_str):
+    """
+    formula_str: ví dụ "(l + m + u)/3"
+    """
+    if formula_str is None or formula_str.strip() == "":
+        # default
+        return lambda l, m, u: (l + m + u) / 3
+
+    # validate đơn giản
+    allowed = {"l", "m", "u"}
+    code = compile(formula_str, "<string>", "eval")
+
+    def func(l, m, u):
+        return eval(code, {"__builtins__": {}}, {"l": l, "m": m, "u": u})
+
+    return func
+
+def validate_formula(formula_str):
+    try:
+        f = build_defuzzify_func(formula_str)
+        test = f(1, 2, 3)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 # ─── Đọc dữ liệu từ các sheet Ans ─────────────────────────────────────────
 def read_expert_sheets(
@@ -72,7 +99,9 @@ def read_expert_sheets(
     start_col=2,
     n_rows=None,
     n_cols=None,
-    header_row=1
+    header_row=1,
+    fuzzy_scale=None,
+    defuzz_func=None
 ):
     """
     Configurable reader:
@@ -126,8 +155,8 @@ def read_expert_sheets(
         for i in range(n):
             for j in range(n):
                 val = rows[start_row - 1 + i][start_col - 1 + j]
-                l, m, u = parse_fuzzy_label(val)
-                matrix[i, j] = defuzzify(l, m, u)
+                l, m, u = parse_fuzzy_label(val, fuzzy_scale)
+                matrix[i, j] = defuzz_func(l, m, u)
 
         experts.append(matrix)
 
@@ -595,15 +624,26 @@ def run_pipeline(
     start_col=2,
     n_rows=None,
     n_cols=None,
-    header_row=1
+    header_row=1,
+    fuzzy_scale=None,
+    defuzz_func=None
 ):
+    if fuzzy_scale is None:
+        raise ValueError(f"❌ Please import FUZZY SCALE") 
+
+    if defuzz_func is None:
+        defuzz_func = lambda l, m, u: (l + m + u)/3
+
+    # pass vào reader
     factors, experts = read_expert_sheets(
         input_file,
         start_row=start_row,
         start_col=start_col,
         n_rows=n_rows,
         n_cols=n_cols,
-        header_row=header_row
+        header_row=header_row,
+        fuzzy_scale=fuzzy_scale,
+        defuzz_func=defuzz_func
     )
 
     df, rc_plus, rc_minus, T_orig, p_boot, r_boot = run_bootstrap(
